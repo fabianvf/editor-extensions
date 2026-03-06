@@ -558,6 +558,7 @@ class VsCodeExtension {
           this.createHubProxyModelProvider(llmProxyConfig)
             .then((provider) => {
               this.state.modelProvider = provider;
+              this.state.modelProviderSource = "hub-proxy";
               this.state.logger.info("Model provider updated with Hub LLM proxy");
 
               // Clear GenAI/provider-related config errors
@@ -1126,6 +1127,7 @@ class VsCodeExtension {
     // Check if GenAI is disabled via settings
     if (!getConfigGenAIEnabled()) {
       this.state.modelProvider = undefined;
+      this.state.modelProviderSource = undefined;
       // Only dispose workflow if not fetching solution
       if (
         !this.state.data.isFetchingSolution &&
@@ -1150,6 +1152,7 @@ class VsCodeExtension {
 
       try {
         this.state.modelProvider = await this.createHubProxyModelProvider(llmProxyConfig);
+        this.state.modelProviderSource = "hub-proxy";
 
         // Clear GenAI/provider-related config errors now that we're using the Hub proxy
         this.state.mutateConfigErrors((draft) => {
@@ -1185,6 +1188,7 @@ class VsCodeExtension {
       } catch (err) {
         this.state.logger.error("Error setting up Hub LLM proxy provider:", err);
         this.state.modelProvider = undefined;
+        this.state.modelProviderSource = undefined;
 
         const configError = createConfigError.providerConnnectionFailed();
         configError.error =
@@ -1201,6 +1205,7 @@ class VsCodeExtension {
     } catch (err) {
       this.state.logger.error("Error getting model config:", err);
       this.state.modelProvider = undefined;
+      this.state.modelProviderSource = undefined;
       // Only dispose workflow if not fetching solution
       if (
         !this.state.data.isFetchingSolution &&
@@ -1216,6 +1221,44 @@ class VsCodeExtension {
       return configError;
     }
 
+    // Re-check: Hub proxy may have become available while we were reading settings.yaml.
+    // Without this guard, the local-config model would overwrite the hub proxy model
+    // that was set by the Hub connection callback during the await above.
+    const llmProxyRecheck = this.state.hubConnectionManager.getLLMProxyConfig();
+    if (llmProxyRecheck?.available) {
+      this.state.logger.info(
+        "Hub LLM proxy became available during config parsing, using Hub proxy instead of local config",
+        { endpoint: llmProxyRecheck.endpoint },
+      );
+
+      try {
+        this.state.modelProvider = await this.createHubProxyModelProvider(llmProxyRecheck);
+        this.state.modelProviderSource = "hub-proxy";
+
+        this.state.mutateConfigErrors((draft) => {
+          draft.configErrors = draft.configErrors.filter(
+            (e) =>
+              e.type !== "provider-not-configured" &&
+              e.type !== "provider-connection-failed" &&
+              e.type !== "genai-disabled",
+          );
+        });
+
+        return undefined;
+      } catch (err) {
+        this.state.logger.error("Error setting up Hub LLM proxy provider (re-check):", err);
+        this.state.modelProvider = undefined;
+        this.state.modelProviderSource = undefined;
+
+        const configError = createConfigError.providerConnnectionFailed();
+        configError.error =
+          err instanceof Error
+            ? `Hub LLM Proxy: ${err.message.length > 150 ? err.message.slice(0, 150) + "..." : err.message}`
+            : String(err);
+        return configError;
+      }
+    }
+
     try {
       this.state.logger.info("About to run getModelProviderFromConfig", {
         hadPreviousProvider,
@@ -1228,6 +1271,10 @@ class VsCodeExtension {
         getConfigKaiDemoMode() ? getCacheDir(this.data.workspaceRoot) : undefined,
         getTraceEnabled() ? getTraceDir(this.data.workspaceRoot) : undefined,
       );
+      this.state.modelProviderSource = "local-config";
+      this.state.logger.info("Model provider set from local config", {
+        provider: modelConfig.config.provider,
+      });
 
       // Dispose workflow if we're changing an existing provider and not currently fetching
       if (
@@ -1253,6 +1300,7 @@ class VsCodeExtension {
     } catch (err) {
       this.state.logger.error("Error running model health check:", err);
       this.state.modelProvider = undefined;
+      this.state.modelProviderSource = undefined;
       this.state.logger.error("Health check failed, setting modelProvider to undefined", {
         error: err,
         demoMode: getConfigKaiDemoMode(),
@@ -1302,7 +1350,7 @@ class VsCodeExtension {
     const modelName = llmProxyConfig.model || "gpt-4o";
 
     const streamingModel = new ChatOpenAI({
-      openAIApiKey: bearerToken, // Use JWT as API key
+      apiKey: bearerToken, // Use JWT as API key for Hub proxy
       configuration: {
         baseURL: llmProxyConfig.endpoint, // Point to Hub's proxy endpoint
       },
@@ -1312,7 +1360,7 @@ class VsCodeExtension {
     });
 
     const nonStreamingModel = new ChatOpenAI({
-      openAIApiKey: bearerToken,
+      apiKey: bearerToken,
       configuration: {
         baseURL: llmProxyConfig.endpoint,
       },

@@ -1,0 +1,3 @@
+kind: bugfix
+description: >
+  Fixed race condition where local config model provider could overwrite Hub LLM proxy provider during startup, causing missing credentials errors.
