@@ -1334,8 +1334,8 @@ class VsCodeExtension {
     endpoint: string;
     model?: string;
   }): Promise<KaiModelProvider> {
-    const bearerToken = this.state.hubConnectionManager.getBearerToken();
-    if (!bearerToken) {
+    const bearerToken = this.state.hubConnectionManager.getBearerToken() || "sk-auth-disabled";
+    if (bearerToken === "sk-auth-disabled" && this.state.hubConnectionManager.isAuthEnabled()) {
       throw new Error("No bearer token available for Hub LLM proxy authentication");
     }
 

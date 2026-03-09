@@ -192,6 +192,13 @@ export class HubConnectionManager {
   }
 
   /**
+   * Check if authentication is enabled in Hub configuration
+   */
+  public isAuthEnabled(): boolean {
+    return this.config.auth.enabled;
+  }
+
+  /**
    * Check if authentication is valid
    */
   public hasValidAuth(): boolean {
