@@ -159,6 +159,14 @@ export class HubConnectionManager {
   }
 
   /**
+   * Get the connection-scoped fetch function for Hub connections.
+   * Returns undefined when not in insecure mode (use default fetch).
+   */
+  public getScopedFetch(): typeof fetch | undefined {
+    return this.scopedFetch ?? undefined;
+  }
+
+  /**
    * Get bearer token for Hub authentication
    */
   public getBearerToken(): string | null {

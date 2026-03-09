@@ -1349,10 +1349,22 @@ class VsCodeExtension {
     // Use model from Hub configuration, fallback to gpt-4o if not specified
     const modelName = llmProxyConfig.model || "gpt-4o";
 
+    // Get the scoped fetch for insecure Hub connections (TLS bypass).
+    // The OpenAI SDK uses its own HTTP client, not globalThis.fetch,
+    // so we must explicitly pass the custom fetch via configuration.
+    const scopedFetch = this.state.hubConnectionManager.getScopedFetch();
+
+    this.state.logger.info("Hub proxy model provider fetch configuration", {
+      hasScopedFetch: !!scopedFetch,
+      endpoint: llmProxyConfig.endpoint,
+      model: modelName,
+    });
+
     const streamingModel = new ChatOpenAI({
       apiKey: bearerToken, // Use JWT as API key for Hub proxy
       configuration: {
         baseURL: llmProxyConfig.endpoint, // Point to Hub's proxy endpoint
+        ...(scopedFetch ? { fetch: scopedFetch } : {}),
       },
       modelName,
       temperature: 0,
@@ -1363,6 +1375,7 @@ class VsCodeExtension {
       apiKey: bearerToken,
       configuration: {
         baseURL: llmProxyConfig.endpoint,
+        ...(scopedFetch ? { fetch: scopedFetch } : {}),
       },
       modelName,
       temperature: 0,
