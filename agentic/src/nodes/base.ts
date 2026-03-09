@@ -73,69 +73,23 @@ export abstract class BaseNode extends KaiWorkflowEventEmitter {
       emitResponseChunks = true,
       toolsSelectors = [],
     } = streamOptions || {};
-    this.logger.info(`[BaseNode.streamOrInvoke] ENTER node=${this.name}`, {
-      enableTools,
-      emitResponseChunks,
-      toolsSelectors,
-      toolCount: this.tools.length,
-      toolCallsSupported: this.modelProvider.toolCallsSupported(),
-      toolCallsSupportedInStreaming: this.modelProvider.toolCallsSupportedInStreaming(),
-      hasCacheKey: !!(options && options.cacheKey),
-      cacheKey: options?.cacheKey ?? "none",
-      modelProviderType: this.modelProvider.constructor?.name ?? "unknown",
-    });
     try {
       // if we don't have tools enabled or registered, we should be able to stream without any issues
       if (!enableTools || !this.tools.length) {
-        this.logger.info(
-          `[BaseNode.streamOrInvoke] No tools path - calling modelProvider.stream()`,
-          { enableTools, toolCount: this.tools.length },
-        );
-        const streamStartTime = Date.now();
-        let stream;
-        try {
-          stream = await this.modelProvider.stream(input, options);
-          this.logger.info(
-            `[BaseNode.streamOrInvoke] modelProvider.stream() returned successfully`,
-            { durationMs: Date.now() - streamStartTime },
-          );
-        } catch (streamErr) {
-          this.logger.error(`[BaseNode.streamOrInvoke] modelProvider.stream() THREW`, {
-            durationMs: Date.now() - streamStartTime,
-            errorMessage: streamErr instanceof Error ? streamErr.message : String(streamErr),
-            errorName: streamErr instanceof Error ? streamErr.name : "unknown",
-            errorStack: streamErr instanceof Error ? streamErr.stack : undefined,
-            errorType: typeof streamErr,
-            errorConstructor: streamErr?.constructor?.name ?? "unknown",
-          });
-          throw streamErr;
-        }
-        this.logger.info(`[BaseNode.streamOrInvoke] Calling process_stream with obtained stream`);
-        const result = await this.process_stream(
+        return this.process_stream(
           messageId,
           enableTools,
           emitResponseChunks,
-          stream,
+          await this.modelProvider.stream(input, options),
         );
-        this.logger.info(`[BaseNode.streamOrInvoke] process_stream completed`, {
-          hasResult: !!result,
-          resultContentLength:
-            result && typeof result.content === "string" ? result.content.length : 0,
-          resultToolCalls: result?.tool_calls?.length ?? 0,
-        });
-        return result;
       }
 
       let runnable: KaiModelProvider = this.modelProvider;
       let processedInput: BaseLanguageModelInput = input;
 
       if (this.modelProvider.toolCallsSupported()) {
-        this.logger.info(`[BaseNode.streamOrInvoke] Tools path - binding tools to model`);
         runnable = this.modelProvider.bindTools(this.tools);
       } else {
-        this.logger.info(
-          `[BaseNode.streamOrInvoke] Tools path - using custom tool parsing (model doesn't support native tools)`,
-        );
         // use custom tool parsing if model does not support tool calls
         processedInput = this.getInputWithTools(input, toolsSelectors);
       }
@@ -145,9 +99,6 @@ export abstract class BaseNode extends KaiWorkflowEventEmitter {
         this.modelProvider.toolCallsSupported() &&
         !this.modelProvider.toolCallsSupportedInStreaming()
       ) {
-        this.logger.info(
-          `[BaseNode.streamOrInvoke] Using invoke() (no streaming tool calls support)`,
-        );
         const fullResponse = await runnable.invoke(processedInput, options);
         if (emitResponseChunks) {
           this.emitWorkflowMessage({
@@ -159,44 +110,16 @@ export abstract class BaseNode extends KaiWorkflowEventEmitter {
         return fullResponse;
       }
 
-      this.logger.info(`[BaseNode.streamOrInvoke] Tools path - calling runnable.stream()`);
-      const toolStreamStartTime = Date.now();
-      let toolStream;
-      try {
-        toolStream = await runnable.stream(processedInput, options);
-        this.logger.info(`[BaseNode.streamOrInvoke] runnable.stream() returned successfully`, {
-          durationMs: Date.now() - toolStreamStartTime,
-        });
-      } catch (toolStreamErr) {
-        this.logger.error(`[BaseNode.streamOrInvoke] runnable.stream() THREW`, {
-          durationMs: Date.now() - toolStreamStartTime,
-          errorMessage:
-            toolStreamErr instanceof Error ? toolStreamErr.message : String(toolStreamErr),
-          errorName: toolStreamErr instanceof Error ? toolStreamErr.name : "unknown",
-          errorStack: toolStreamErr instanceof Error ? toolStreamErr.stack : undefined,
-        });
-        throw toolStreamErr;
-      }
-      return this.process_stream(messageId, enableTools, emitResponseChunks, toolStream);
+      return this.process_stream(
+        messageId,
+        enableTools,
+        emitResponseChunks,
+        await runnable.stream(processedInput, options),
+      );
     } catch (err) {
       this.logger.error(
-        `[BaseNode.streamOrInvoke] CAUGHT ERROR: ${err instanceof Error ? err.message : String(err)}`,
-        {
-          error: err,
-          errorName: err instanceof Error ? err.name : "unknown",
-          errorMessage: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-          errorType: typeof err,
-          errorConstructor: err?.constructor?.name ?? "unknown",
-          errorKeys: err && typeof err === "object" ? Object.keys(err as object) : [],
-          errorJSON: (() => {
-            try {
-              return JSON.stringify(err);
-            } catch {
-              return "not serializable";
-            }
-          })(),
-        },
+        `Error calling stream(): ${err instanceof Error ? err.message : String(err)}`,
+        { error: err, stack: err instanceof Error ? err.stack : undefined },
       );
       if (emitResponseChunks) {
         this.emitWorkflowMessage({

@@ -100,60 +100,31 @@ export class BaseModelProvider implements KaiModelProvider {
     input: BaseLanguageModelInput,
     options?: Partial<KaiModelProviderInvokeCallOptions> | undefined,
   ): Promise<AIMessage> {
-    this.logger.info("[BaseModelProvider.invoke] ENTER", {
-      hasOptions: !!options,
-      hasCacheKey: !!(options && options.cacheKey),
-      hasTools: !!(this.tools && this.tools.length),
-      modelClass: this.nonStreamingModel?.constructor?.name ?? "unknown",
-    });
-
     if (options && options.cacheKey) {
       const cachedResult = await this.cache.get(input, {
         cacheSubDir: options.cacheKey,
       });
       if (cachedResult) {
-        this.logger.info("[BaseModelProvider.invoke] Cache HIT");
         return cachedResult as AIMessage;
       }
-      this.logger.info("[BaseModelProvider.invoke] Cache MISS");
     }
 
     // Strip cacheKey before passing to the underlying model - it's not a valid LangChain option
     const modelOptions = options ? stripCacheKey(options) : undefined;
 
     let result: AIMessageChunk;
-    const invokeStartTime = Date.now();
-    try {
-      if (
-        this.capabilities.supportsTools &&
-        this.tools &&
-        this.tools.length &&
-        this.nonStreamingModel.bindTools
-      ) {
-        this.logger.info("[BaseModelProvider.invoke] Calling bindTools().invoke()");
-        result = await this.nonStreamingModel
-          .bindTools(this.tools, this.toolKwargs)
-          .invoke(input, modelOptions);
-      } else {
-        this.logger.info(
-          "[BaseModelProvider.invoke] Calling nonStreamingModel.invoke() (no tools)",
-        );
-        result = await this.nonStreamingModel.invoke(input, modelOptions);
-      }
-      this.logger.info("[BaseModelProvider.invoke] invoke() succeeded", {
-        durationMs: Date.now() - invokeStartTime,
-        contentLength: typeof result.content === "string" ? result.content.length : 0,
-      });
-    } catch (invokeError) {
-      this.logger.error("[BaseModelProvider.invoke] FAILED", {
-        durationMs: Date.now() - invokeStartTime,
-        errorMessage: invokeError instanceof Error ? invokeError.message : String(invokeError),
-        errorName: invokeError instanceof Error ? invokeError.name : "unknown",
-        errorStack: invokeError instanceof Error ? invokeError.stack : undefined,
-      });
-      throw invokeError;
+    if (
+      this.capabilities.supportsTools &&
+      this.tools &&
+      this.tools.length &&
+      this.nonStreamingModel.bindTools
+    ) {
+      result = await this.nonStreamingModel
+        .bindTools(this.tools, this.toolKwargs)
+        .invoke(input, modelOptions);
+    } else {
+      result = await this.nonStreamingModel.invoke(input, modelOptions);
     }
-
     if (options && options.cacheKey) {
       this.cache.set(input, result, {
         cacheSubDir: options.cacheKey,
@@ -171,26 +142,11 @@ export class BaseModelProvider implements KaiModelProvider {
     input: any,
     options?: Partial<KaiModelProviderInvokeCallOptions> | undefined,
   ): Promise<IterableReadableStream<any>> {
-    this.logger.info("[BaseModelProvider.stream] ENTER", {
-      hasOptions: !!options,
-      hasCacheKey: !!(options && options.cacheKey),
-      cacheKey: options?.cacheKey ?? "none",
-      hasTools: !!(this.tools && this.tools.length),
-      toolCount: this.tools?.length ?? 0,
-      supportsToolsInStreaming: this.capabilities.supportsToolsInStreaming,
-      supportsTools: this.capabilities.supportsTools,
-      modelClass: this.streamingModel?.constructor?.name ?? "unknown",
-    });
-
     if (options && options.cacheKey) {
-      this.logger.info("[BaseModelProvider.stream] Checking cache", {
-        cacheSubDir: options.cacheKey,
-      });
       const cachedResult = await this.cache.get(input, {
         cacheSubDir: options.cacheKey,
       });
       if (cachedResult) {
-        this.logger.info("[BaseModelProvider.stream] Cache HIT, returning cached result");
         return new ReadableStream({
           start(controller) {
             controller.enqueue(cachedResult);
@@ -198,68 +154,31 @@ export class BaseModelProvider implements KaiModelProvider {
           },
         }) as IterableReadableStream<any>;
       }
-      this.logger.info("[BaseModelProvider.stream] Cache MISS, proceeding to model call");
     }
 
     // Strip cacheKey before passing to the underlying model - it's not a valid LangChain option
     const modelOptions = options ? stripCacheKey(options) : undefined;
-    this.logger.info("[BaseModelProvider.stream] Options after stripping cacheKey", {
-      hasModelOptions: !!modelOptions,
-      modelOptionKeys: modelOptions ? Object.keys(modelOptions) : [],
-    });
 
     // Get the actual stream from the underlying model
     let actualStream: IterableReadableStream<any>;
-    const streamStartTime = Date.now();
-    try {
-      if (
-        this.capabilities.supportsToolsInStreaming &&
-        this.tools &&
-        this.tools.length &&
-        this.streamingModel.bindTools
-      ) {
-        this.logger.info("[BaseModelProvider.stream] Calling streamingModel.bindTools().stream()", {
-          toolCount: this.tools.length,
-        });
-        actualStream = await this.streamingModel
-          .bindTools(this.tools, this.toolKwargs)
-          .stream(input, modelOptions);
-      } else {
-        this.logger.info("[BaseModelProvider.stream] Calling streamingModel.stream() (no tools)");
-        actualStream = await this.streamingModel.stream(input, modelOptions);
-      }
-      this.logger.info("[BaseModelProvider.stream] Stream created successfully", {
-        durationMs: Date.now() - streamStartTime,
-        streamType: actualStream?.constructor?.name ?? "unknown",
-      });
-    } catch (streamError) {
-      const durationMs = Date.now() - streamStartTime;
-      this.logger.error("[BaseModelProvider.stream] FAILED to create stream", {
-        durationMs,
-        errorMessage: streamError instanceof Error ? streamError.message : String(streamError),
-        errorName: streamError instanceof Error ? streamError.name : "unknown",
-        errorStack: streamError instanceof Error ? streamError.stack : undefined,
-        errorType: typeof streamError,
-        errorConstructor: streamError?.constructor?.name ?? "unknown",
-        errorKeys: streamError && typeof streamError === "object" ? Object.keys(streamError) : [],
-        errorJSON: (() => {
-          try {
-            return JSON.stringify(streamError);
-          } catch {
-            return "not serializable";
-          }
-        })(),
-      });
-      throw streamError;
+    if (
+      this.capabilities.supportsToolsInStreaming &&
+      this.tools &&
+      this.tools.length &&
+      this.streamingModel.bindTools
+    ) {
+      actualStream = await this.streamingModel
+        .bindTools(this.tools, this.toolKwargs)
+        .stream(input, modelOptions);
+    } else {
+      actualStream = await this.streamingModel.stream(input, modelOptions);
     }
 
     // If no caching is needed, return the stream as-is
     if (!options || !options.cacheKey) {
-      this.logger.info("[BaseModelProvider.stream] No caching needed, returning stream as-is");
       return actualStream;
     }
 
-    this.logger.info("[BaseModelProvider.stream] Wrapping stream with caching ReadableStream");
     let accumulatedResponse: AIMessageChunk | undefined;
     const cache = this.cache;
     const tracer = this.tracer;
@@ -267,10 +186,7 @@ export class BaseModelProvider implements KaiModelProvider {
     return new ReadableStream({
       async start(controller) {
         try {
-          logger.info("[BaseModelProvider.stream] Starting to read from wrapped stream");
-          let chunkCount = 0;
           for await (const chunk of actualStream) {
-            chunkCount++;
             if (!accumulatedResponse) {
               accumulatedResponse = chunk;
             } else {
@@ -278,10 +194,6 @@ export class BaseModelProvider implements KaiModelProvider {
             }
             controller.enqueue(chunk);
           }
-          logger.info("[BaseModelProvider.stream] Stream reading complete", {
-            chunkCount,
-            hasAccumulatedResponse: !!accumulatedResponse,
-          });
           if (accumulatedResponse && options && options.cacheKey) {
             await cache.set(input, accumulatedResponse, {
               cacheSubDir: options.cacheKey,
@@ -291,15 +203,10 @@ export class BaseModelProvider implements KaiModelProvider {
               inputFileExt: "",
               outputFileExt: "",
             });
-            logger.info("[BaseModelProvider.stream] Cached stream result");
           }
           controller.close();
         } catch (error) {
-          logger.error("[BaseModelProvider.stream] Error during stream reading", {
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorName: error instanceof Error ? error.name : "unknown",
-            errorStack: error instanceof Error ? error.stack : undefined,
-          });
+          logger.error("Error streaming", { error });
           controller.error(error);
         }
       },
